@@ -11,10 +11,18 @@ do $$ begin create type public.request_status as enum ('pending','approved','rej
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  phone text not null unique, full_name text not null, date_of_birth date,
+  phone text unique, email text unique, full_name text not null, date_of_birth date,
   role public.user_role not null default 'employee', status text not null default 'active',
   created_at timestamptz not null default now(), updated_at timestamptz not null default now()
 );
+create table if not exists public.employee_invites (
+  id uuid primary key default gen_random_uuid(), email text not null unique,
+  full_name text not null, role public.user_role not null default 'employee',
+  status text not null default 'pending', created_at timestamptz not null default now()
+);
+alter table public.profiles add column if not exists email text;
+alter table public.profiles alter column phone drop not null;
+create index if not exists profiles_email_idx on public.profiles (lower(email));
 create table if not exists public.sensitive_employee_data (
   profile_id uuid primary key references public.profiles(id) on delete cascade,
   identity_number_ciphertext text, bank_account_ciphertext text,
@@ -124,3 +132,18 @@ drop policy if exists audit_logs_actor_insert on public.audit_logs;
 create policy audit_logs_actor_insert on public.audit_logs for insert to authenticated with check (actor_id=auth.uid());
 
 alter default privileges in schema public grant select,insert,update,delete on tables to authenticated;
+
+-- Magic-link allowlist: returns only a boolean, never employee data.
+create or replace function public.is_registered_email(candidate text)
+returns boolean language sql stable security definer set search_path=public as $$
+  select exists(select 1 from public.profiles where lower(email)=lower(trim(candidate)) and status in ('active','pending'))
+    or exists(select 1 from public.employee_invites where lower(email)=lower(trim(candidate)) and status='pending')
+    or not exists(select 1 from public.profiles)
+$$;
+revoke all on function public.is_registered_email(text) from public;
+grant execute on function public.is_registered_email(text) to anon, authenticated;
+alter table public.employee_invites enable row level security;
+drop policy if exists invites_admin_all on public.employee_invites;
+create policy invites_admin_all on public.employee_invites for all to authenticated using (public.current_user_role()='admin') with check (public.current_user_role()='admin');
+drop policy if exists invites_self_select on public.employee_invites;
+create policy invites_self_select on public.employee_invites for select to authenticated using (lower(email)=lower((select email from auth.users where id=auth.uid())));

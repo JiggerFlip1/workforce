@@ -14,8 +14,9 @@ function readStore(key, fallback) { try { const value = JSON.parse(localStorage.
 const employees = readStore('workforce.employees', defaultEmployees)
 const shiftTemplates = readStore('workforce.shiftTemplates', [{name:'班次 A',start:'16:00',end:'01:30',location:'香港門市'},{name:'早更',start:'09:00',end:'18:00',location:'香港門市'},{name:'晚更',start:'13:00',end:'22:00',location:'香港門市'}])
 const attendanceLogs = readStore('workforce.attendanceLogs', [])
-const state = { page: '概覽', modal: false, editingIndex: null, shiftModal: false, templateModal: false, clockModal: false, shiftDate: '2026-09-28', shiftEmployee: '', scheduleStatus: '草稿', clockEmployee: '' }
+const state = { page: '概覽', modal: false, editingIndex: null, shiftModal: false, templateModal: false, clockModal: false, shiftDate: '2026-09-28', shiftEmployee: '', scheduleStatus: '草稿', clockEmployee: '', appMode: 'admin' }
 let authSession = null
+let currentProfile = null
 let authStep = 'email'
 let authMessage = ''
 const shifts = readStore('workforce.shifts', [])
@@ -56,13 +57,20 @@ function layout() {
     bindAuth()
     return
   }
+  const role = currentProfile?.role || 'admin'
+  if (state.appMode === 'employee' || role === 'employee') {
+    document.querySelector('#app').innerHTML = employeeApp()
+    bindEmployeeApp()
+    return
+  }
+  const allowedNav = role === 'manager' ? nav.filter(item => !['員工'].includes(item)) : nav
   document.querySelector('#app').innerHTML = `
     <div class="shell">
       <aside class="sidebar">
         <div class="brand"><div class="brand-mark">班</div><div><strong>班咭</strong><span>WORKFORCE</span></div></div>
         <div class="workspace"><span class="workspace-dot"></span><div><small>目前工作空間</small><b>香港門市</b></div><span class="chevron">⌄</span></div>
-        <nav>${nav.map((item, i) => `<button class="nav-item ${state.page===item?'active':''}" data-page="${item}"><span class="nav-icon">${icon(['grid','calendar','users','clock','leave'][i])}</span>${item}${item==='打卡紀錄'?'<em>3</em>':''}</button>`).join('')}</nav>
-        <div class="sidebar-bottom"><div class="support"><span>?</span><div><b>需要協助？</b><small>查看使用指南</small></div></div><div class="profile"><div class="avatar avatar-dark">林</div><div><b>林經理</b><small>管理員</small></div><span class="more">···</span></div></div>
+        <nav>${allowedNav.map((item, i) => `<button class="nav-item ${state.page===item?'active':''}" data-page="${item}"><span class="nav-icon">${icon(['grid','calendar','users','clock','leave'][nav.indexOf(item)])}</span>${item}${item==='打卡紀錄'?'<em>3</em>':''}</button>`).join('')}</nav>
+        <div class="sidebar-bottom"><div class="support"><span>?</span><div><b>需要協助？</b><small>查看使用指南</small></div></div>${role==='admin'?'<button class="mode-switch" data-action="employee-mode">切換員工應用介面</button>':''}<div class="profile"><div class="avatar avatar-dark">${(currentProfile?.full_name||'林').slice(0,1)}</div><div><b>${currentProfile?.full_name||'林經理'}</b><small>${role==='admin'?'管理員':role==='manager'?'主管':'員工'}</small></div><button class="more" data-action="sign-out">登出</button></div></div>
       </aside>
       <main class="main"><header><div class="mobile-brand"><div class="brand-mark">班</div><strong>班咭</strong></div><div class="breadcrumb"><span>香港門市</span><b>/</b><strong>${state.page}</strong></div><div class="header-actions"><button class="icon-btn search-btn">${icon('search')}</button><button class="icon-btn notification">${icon('bell')}<i></i></button><div class="avatar avatar-dark">林</div></div></header>${content()}</main>${state.modal ? employeeModal() : ''}
     </div>${state.shiftModal ? shiftEditor() : ''}${state.templateModal ? templateEditor() : ''}${state.clockModal ? clockEditor() : ''}`
@@ -95,6 +103,25 @@ function layout() {
   document.querySelector('[data-action="export-records"]')?.addEventListener('click',exportRecords)
   document.querySelectorAll('[data-action="quick-new-shift"]').forEach(b=>b.onclick=()=>{state.page='班表';openNewShift()})
   document.querySelectorAll('[data-action="quick-new-employee"]').forEach(b=>b.onclick=()=>{state.modal=true;state.editingIndex=null;layout()})
+  document.querySelector('[data-action="employee-mode"]')?.addEventListener('click',()=>{state.appMode='employee';layout()})
+  document.querySelector('[data-action="sign-out"]')?.addEventListener('click',()=>supabase?.auth.signOut())
+}
+
+function employeeApp(){
+  const name=currentProfile?.full_name||'員工';
+  return `<main class="employee-shell"><header class="employee-header"><div class="brand"><div class="brand-mark">班</div><div><strong>班咭</strong><span>員工應用</span></div></div><button class="icon-btn" data-action="sign-out">登出</button></header><section class="employee-content"><p class="eyebrow">${new Date().toLocaleDateString('zh-HK',{weekday:'long',month:'long',day:'numeric'})}</p><h1>你好，${name}</h1><p class="sub">今日班次：16:00 – 01:30 · 4C 工作室</p><div class="employee-status"><span class="status-dot"></span><div><b>定位服務待確認</b><small>打卡時將記錄時間、位置及準確度</small></div></div><div class="punch-grid"><button class="punch punch-in" data-action="employee-clock-in">上班打卡<strong>16:00</strong></button><button class="punch punch-out" data-action="employee-clock-out">下班打卡<strong>01:30</strong></button></div><div class="employee-panels"><div class="employee-panel"><h2>今日提醒</h2><p>開工前 15 分鐘提醒</p><p>下班前 15 分鐘提醒</p><p>遲到將即時通知主管</p></div><div class="employee-panel"><h2>快速功能</h2><button data-action="request-punch">申請補卡</button><button data-action="my-records">我的打卡紀錄</button><button data-action="my-schedule">本週班表</button></div></div>${currentProfile?.role==='admin'?'<button class="btn btn-light" data-action="admin-mode">返回管理介面</button>':''}</section></main>${state.clockModal?clockEditor():''}`
+}
+function bindEmployeeApp(){
+  document.querySelector('[data-action="employee-clock-in"]')?.addEventListener('click',()=>{state.clockModal=true;state.clockEmployee=currentProfile?.full_name||employees[0]?.name||'';layout();setTimeout(()=>document.querySelector('[data-action="clock-in"]')?.click(),0)})
+  document.querySelector('[data-action="employee-clock-out"]')?.addEventListener('click',()=>{state.clockModal=true;state.clockEmployee=currentProfile?.full_name||employees[0]?.name||'';layout();setTimeout(()=>document.querySelector('[data-action="clock-out"]')?.click(),0)})
+  document.querySelector('[data-action="admin-mode"]')?.addEventListener('click',()=>{state.appMode='admin';layout()})
+  document.querySelector('[data-action="sign-out"]')?.addEventListener('click',()=>supabase?.auth.signOut())
+  document.querySelector('[data-action="request-punch"]')?.addEventListener('click',()=>showToast('補卡申請功能已開啟，請填寫原因後提交主管審批'))
+  document.querySelector('[data-action="my-records"]')?.addEventListener('click',()=>showToast('正在載入你的打卡紀錄'))
+  document.querySelector('[data-action="my-schedule"]')?.addEventListener('click',()=>showToast('正在載入本週班表'))
+  document.querySelector('[data-action="close-clock"]')?.addEventListener('click',()=>{state.clockModal=false;layout()})
+  document.querySelector('[data-action="clock-in"]')?.addEventListener('click',()=>recordClock('上班打卡'))
+  document.querySelector('[data-action="clock-out"]')?.addEventListener('click',()=>recordClock('下班打卡'))
 }
 
 function loginPage() {
@@ -109,6 +136,8 @@ function bindAuth() {
 async function sendOtp() {
   const email = document.querySelector('#auth-email')?.value.trim()
   if (!email) { authMessage = '請輸入公司電郵'; layout(); return }
+  const { data: allowed, error: allowError } = await supabase.rpc('is_registered_email', { candidate: email })
+  if (allowError || allowed !== true) { authMessage = '此電郵尚未由管理員登記，請聯絡主管。'; layout(); return }
   const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } })
   if (error) { authMessage = `發送失敗：${error.message}`; layout(); return }
   authMessage = '登入連結已發送，請查看電郵並按下連結。'
@@ -129,18 +158,20 @@ function copyPreviousWeek(){const anchor=new Date(`${state.shiftDate||'2026-09-2
 function saveTemplate(){const name=document.querySelector('#template-name')?.value.trim();const start=document.querySelector('#template-start')?.value;const end=document.querySelector('#template-end')?.value;const location=document.querySelector('#template-location')?.value||'香港門市';if(!name||!start||!end){showToast('請填寫班次名稱及時間');return}if(start===end){showToast('開始及結束時間不能相同');return}shiftTemplates.push({name,start,end,location});localStorage.setItem('workforce.shiftTemplates',JSON.stringify(shiftTemplates));state.templateModal=false;layout();showToast(`已新增預設班次「${name}」`)}
 function deleteTemplate(index){const item=shiftTemplates[index];if(!item)return;shiftTemplates.splice(index,1);localStorage.setItem('workforce.shiftTemplates',JSON.stringify(shiftTemplates));layout();showToast(`已刪除預設班次「${item.name}」`)}
 
-function employeeModal(){const e=state.editingIndex===null?{}:employees[state.editingIndex];const location=e.location||'香港門市';return `<div class="modal-backdrop"><div class="modal"><div class="modal-head"><div><p class="eyebrow">團隊管理</p><h2>${state.editingIndex===null?'新增員工':'編輯員工資料'}</h2><p>管理員工基本資料及工作地點。</p></div><button class="modal-close" data-action="close-modal">×</button></div><div class="form-grid"><label>姓名<input id="employee-name" value="${e.name||''}" placeholder="例如：王小明" /></label><label>職位<input id="employee-role" value="${e.role||''}" placeholder="例如：店舖主管" /></label><label>員工編號<input id="employee-id" value="${e.id||''}" placeholder="自動產生" /></label><label>工作地點<select id="employee-location"><option ${location==='香港門市'?'selected':''}>香港門市</option><option ${location==='九龍門市'?'selected':''}>九龍門市</option><option ${location==='新界門市'?'selected':''}>新界門市</option></select></label></div><div class="modal-foot"><button class="btn btn-light" data-action="close-modal">取消</button><button class="btn btn-primary" data-action="save-employee">${icon('check')} 儲存員工</button></div></div></div>` }
+function employeeModal(){const e=state.editingIndex===null?{}:employees[state.editingIndex];const location=e.location||'香港門市';return `<div class="modal-backdrop"><div class="modal"><div class="modal-head"><div><p class="eyebrow">團隊管理</p><h2>${state.editingIndex===null?'新增員工':'編輯員工資料'}</h2><p>先登記電郵，員工才可收到登入連結。</p></div><button class="modal-close" data-action="close-modal">×</button></div><div class="form-grid"><label>姓名<input id="employee-name" value="${e.name||''}" placeholder="例如：王小明" /></label><label>登入電郵<input id="employee-email" type="email" value="${e.email||''}" placeholder="員工公司電郵" /></label><label>職位<input id="employee-role" value="${e.role||''}" placeholder="例如：店舖主管" /></label><label>系統權限<select id="employee-access"><option value="employee" ${e.accessRole==='employee'?'selected':''}>一般員工</option><option value="manager" ${e.accessRole==='manager'?'selected':''}>主管</option></select></label><label>員工編號<input id="employee-id" value="${e.id||''}" placeholder="自動產生" /></label><label>工作地點<select id="employee-location"><option ${location==='香港門市'?'selected':''}>香港門市</option><option ${location==='九龍門市'?'selected':''}>九龍門市</option><option ${location==='新界門市'?'selected':''}>新界門市</option></select></label></div><div class="modal-foot"><button class="btn btn-light" data-action="close-modal">取消</button><button class="btn btn-primary" data-action="save-employee">${icon('check')} 儲存並開通電郵</button></div></div></div>` }
 
 function saveEmployee(){
   const name=document.querySelector('#employee-name')?.value.trim(); const role=document.querySelector('#employee-role')?.value.trim();
   if(!name || !role){ document.querySelector('.modal')?.classList.add('shake'); return }
   const existing=state.editingIndex===null?{}:employees[state.editingIndex]
-  const data={...existing,name,role,id:document.querySelector('#employee-id')?.value.trim()||`EMP-${String(employees.length+1).padStart(3,'0')}`,location:document.querySelector('#employee-location')?.value||'香港門市',initials:name.slice(0,1),tone:state.editingIndex===null?['mint','blue','peach','lavender','rose'][employees.length%5]:existing.tone,status:existing.status||'在職',shift:existing.shift||'09:00 – 18:00',check:existing.check||'—',state:existing.state||'未打卡'}
+  const email=document.querySelector('#employee-email')?.value.trim().toLowerCase(); const accessRole=document.querySelector('#employee-access')?.value||'employee'
+  if(!email){showToast('請輸入員工登入電郵');return}
+  const data={...existing,name,email,accessRole,role,id:document.querySelector('#employee-id')?.value.trim()||`EMP-${String(employees.length+1).padStart(3,'0')}`,location:document.querySelector('#employee-location')?.value||'香港門市',initials:name.slice(0,1),tone:state.editingIndex===null?['mint','blue','peach','lavender','rose'][employees.length%5]:existing.tone,status:existing.status||'在職',shift:existing.shift||'09:00 – 18:00',check:existing.check||'—',state:existing.state||'未打卡'}
   if(state.editingIndex===null) employees.push(data); else employees[state.editingIndex]=data
   localStorage.setItem('workforce.employees',JSON.stringify(employees))
   if (supabase) {
-    const payload = { phone: data.phone || data.id, full_name: data.name, role: data.role.includes('主管') ? 'manager' : 'employee', status: data.status === '在職' ? 'active' : 'inactive' }
-    const sync = state.editingIndex===null ? cloudInsert('profiles', { id: crypto.randomUUID(), ...payload }) : cloudUpdate('profiles', 'phone', employees[state.editingIndex].phone || data.id, payload)
+    const payload = { phone: data.phone || data.id, email: data.email, full_name: data.name, role: data.accessRole, status: data.status === '在職' ? 'active' : 'inactive' }
+    const sync = state.editingIndex===null ? cloudInsert('employee_invites', { email:data.email, full_name:data.name, role:data.accessRole, status:'pending' }) : cloudUpdate('employee_invites', 'email', data.email, { full_name:data.name, role:data.accessRole })
     sync.catch(error => reportCloudError(error, '員工已儲存'))
   }
   state.modal=false; state.page='員工'; layout()
@@ -181,8 +212,20 @@ function employeesPage(){return `<section class="content"><div class="title-row"
 
 function records(){const live=attendanceLogs.map(log=>`<tr><td>${log.employee}</td><td>${log.type}</td><td><b>${log.displayTime}</b></td><td><span class="location">⌖ ${log.latitude}, ${log.longitude}</span></td><td><span class="verified">${log.verified?'✓ GPS 已驗證':'! 需核實'}</span></td><td><span class="pill ${log.verified?'on':'late'}">${log.verified?'正常':'需核實'}</span></td></tr>`).join('');const demo=employees.slice(0,4).map((e,i)=>`<tr><td><div class="person"><div class="avatar avatar-${e.tone}">${e.initials}</div><b>${e.name}</b></div></td><td>${i%2?'下班打卡':'上班打卡'}</td><td><b>${i===1?'09:42':e.check}</b></td><td><span class="location">⌖ 香港門市</span></td><td><span class="verified">✓ GPS 已驗證</span></td><td><span class="pill ${e.state.includes('遲到')?'late':'on'}">${e.state.includes('遲到')?'遲到':'正常'}</span></td></tr>`).join('');return `<section class="content"><div class="title-row"><div><p class="eyebrow">考勤管理</p><h1>打卡紀錄</h1><p class="sub">查看所有上下班打卡及異常紀錄。</p></div><div class="actions"><button class="btn btn-primary" data-action="open-clock">手機打卡測試</button><button class="btn btn-light" data-action="export-records">${icon('download')} 匯出紀錄</button><button class="btn btn-primary">${icon('plus')} 補卡申請</button></div></div><div class="stats mini-stats"><div class="stat-card"><span>今日總打卡</span><strong>52<span class="unit"> 次</span></strong></div><div class="stat-card"><span>GPS 驗證成功</span><strong>98.1<span>%</span></strong></div><div class="stat-card"><span>待核實紀錄</span><strong class="orange-text">3<span class="unit"> 項</span></strong></div></div><div class="panel"><div class="list-toolbar"><div class="date-chip">2026年10月1日　⌄</div><button class="filter">所有狀態　⌄</button></div><div class="table-wrap"><table><thead><tr><th>員工</th><th>類型</th><th>時間</th><th>位置</th><th>驗證</th><th>狀態</th></tr></thead><tbody>${live||demo}</tbody></table></div></div></section>`}
 
+async function loadProfile(session){
+  currentProfile=null
+  if (!session?.user || !supabase) return
+  const {data}=await supabase.from('profiles').select('id,email,full_name,role,status').eq('id',session.user.id).maybeSingle()
+  if (data) currentProfile=data
+  else {
+    const invite=await supabase.from('employee_invites').select('email,full_name,role,status').ilike('email',session.user.email||'').maybeSingle()
+    if (invite.data) { await supabase.from('profiles').insert({id:session.user.id,email:invite.data.email,full_name:invite.data.full_name,role:invite.data.role,status:'active'}); currentProfile={id:session.user.id,...invite.data,status:'active'} }
+    else currentProfile={id:session.user.id,email:session.user.email,full_name:session.user.email?.split('@')[0]||'管理員',role:'admin',status:'active'}
+  }
+  if (currentProfile.status && currentProfile.status !== 'active') { await supabase.auth.signOut(); authMessage='帳戶目前未啟用，請聯絡管理員。' }
+}
 if (supabase) {
-  supabase.auth.getSession().then(({ data }) => { authSession = data.session; layout() })
-  supabase.auth.onAuthStateChange((_event, session) => { authSession = session; layout() })
+  supabase.auth.getSession().then(async ({ data }) => { authSession = data.session; await loadProfile(authSession); layout() })
+  supabase.auth.onAuthStateChange(async (_event, session) => { authSession = session; await loadProfile(session); layout() })
 }
 layout()
